@@ -19,7 +19,7 @@ if os.path.exists(dist_dir):
     log.info(f"Removing existing {dist_dir} directory")
     shutil.rmtree(dist_dir)
 
-VERSION = '0.0.4'
+VERSION = '0.0.5'
 
 # define sqlite sources
 sources = [os.path.join('src', source)
@@ -38,22 +38,62 @@ if sys.platform == "darwin":
 
 def find_openssl_prefix() -> str:
     """
-    Tries to detect OpenSSL installation path (Homebrew or system default).
+    Tries to detect OpenSSL installation path (Linux, macOS Homebrew, or system default).
     """
-    brew_candidates = ["openssl@3", "openssl@1.1"]
-    for formula in brew_candidates:
-        try:
-            prefix = subprocess.check_output(
-                ["brew", "--prefix", formula],
-                stderr=subprocess.DEVNULL,
-                universal_newlines=True
-            ).strip()
-            if os.path.exists(os.path.join(prefix, "include", "openssl", "crypto.h")):
-                return prefix
-        except Exception:
-            continue
+    # For macOS, try Homebrew first
+    if sys.platform == "darwin":
+        brew_candidates = ["openssl@3", "openssl@1.1"]
+        for formula in brew_candidates:
+            try:
+                prefix = subprocess.check_output(
+                    ["brew", "--prefix", formula],
+                    stderr=subprocess.DEVNULL,
+                    universal_newlines=True
+                ).strip()
+                if os.path.exists(os.path.join(prefix, "include", "openssl", "crypto.h")):
+                    return prefix
+            except Exception:
+                continue
 
-    # Fallback to common system paths
+    # Linux-specific paths to check
+    if sys.platform.startswith('linux'):
+        linux_paths = [
+            "/usr",  # Standard location
+            "/usr/local",  # Common alternative
+            "/usr/local/opt/openssl",  # Custom installs
+            "/opt/openssl",  # Custom installs
+            "/usr/include/openssl",  # Some distros
+        ]
+        
+        # Check for common package managers to provide better error messages
+        package_managers = {
+            "apt": "apt install libssl-dev",
+            "dnf": "dnf install openssl-devel",
+            "yum": "yum install openssl-devel",
+            "pacman": "pacman -S openssl"
+        }
+        
+        for path in linux_paths:
+            if os.path.exists(os.path.join(path, "include", "openssl", "crypto.h")):
+                return path
+            
+        # If we're here, OpenSSL wasn't found on Linux - prepare helpful message
+        install_cmd = None
+        for pm, cmd in package_managers.items():
+            try:
+                subprocess.check_output(["which", pm], stderr=subprocess.DEVNULL)
+                install_cmd = cmd
+                break
+            except Exception:
+                continue
+                
+        if install_cmd:
+            error_msg = f"OpenSSL headers not found. Please install OpenSSL development package with: `{install_cmd}`"
+        else:
+            error_msg = "OpenSSL headers not found. Please install OpenSSL development package for your distribution."
+        raise RuntimeError(error_msg)
+
+    # Common system paths (fallback for all platforms)
     common_paths = ["/usr/local", "/opt/homebrew", "/usr"]
     for path in common_paths:
         if os.path.exists(os.path.join(path, "include", "openssl", "crypto.h")):
@@ -106,7 +146,7 @@ class AmalgationLibSqliteBuilder(build_ext):
             
             # Run configure
             log.info("Running ./configure in SQLCipher submodule")
-            configure_result = subprocess.run(["./configure"], check=True)
+            configure_result = subprocess.run(["sh","./configure"], check=True)
             
             # Run make sqlite.c
             log.info("Running make sqlite.c in SQLCipher submodule")
