@@ -8,14 +8,20 @@ pip install .
 ```
 
 
-## Dependencies
-1. [SQLCipher](https://github.com/sqlcipher/sqlcipher)
-2. OpenSSL
-
-For example, Mac Users should run
+## Distributing
+Run:
 ```
-brew install sqlcipher
-brew install openssl@3
+python setup.py sdist
+twine upload dist/*
+```
+
+**Important!!**
+* Make sure you don't have any already compiled / built files under dependencies/sqlcipher, if they get packaged into the distribution, the build on some system will fail!
+* To clean them up, do the following
+```
+cd dependencies/sqlcipher
+git add .
+git stash
 ```
 
 

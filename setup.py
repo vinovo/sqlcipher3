@@ -6,6 +6,7 @@ import setuptools
 import shutil
 import sys
 import subprocess
+import re
 
 from distutils import log
 from distutils.command.build_ext import build_ext
@@ -19,7 +20,7 @@ if os.path.exists(dist_dir):
     log.info(f"Removing existing {dist_dir} directory")
     shutil.rmtree(dist_dir)
 
-VERSION = '0.0.5'
+VERSION = '0.0.12'
 
 # define sqlite sources
 sources = [os.path.join('src', source)
@@ -36,6 +37,109 @@ if sys.platform == "darwin":
     log.info("CFLAGS: " + os.environ['CFLAGS'])
 
 
+def parse_openssl_version(opensslv_h_path):
+    """
+    Parse OpenSSL version number from opensslv.h.
+    Returns version string like "3.0.0" or None if parsing fails.
+    """
+    try:
+        with open(opensslv_h_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        match = re.search(r'#\s*define\s+OPENSSL_VERSION_TEXT\s+"OpenSSL\s+(\d+\.\d+\.\d+)', content)
+        if match:
+            return match.group(1)
+    except Exception as e:
+        pass
+    return None
+
+def is_openssl_version_acceptable(version_str):
+    """
+    Check if version is 3.0.0 or higher.
+    """
+    if not version_str:
+        return False
+    parts = list(map(int, version_str.split('.')))
+    return parts >= [3, 0, 0]
+
+def find_openssl_on_windows():
+    """
+    Tries to detect OpenSSL 3.x installation path on Windows with fallback mechanisms.
+    Returns a tuple of (include_dir, lib_dir, lib_name).
+    """
+    # 1. Try environment variable first
+    if os.environ.get('OPENSSL_ROOT'):
+        openssl_root = os.environ['OPENSSL_ROOT']
+        include_dir = os.path.join(openssl_root, 'include')
+        lib_dir = os.path.join(openssl_root, 'lib')
+        lib_name = 'libcrypto.lib'
+        if os.path.exists(os.path.join(lib_dir, lib_name)):
+            return include_dir, lib_dir, lib_name
+    
+    openssl_conf = os.environ.get('OPENSSL_CONF')
+    if openssl_conf and os.path.exists(openssl_conf):
+        openssl_root = os.path.dirname(os.path.dirname(openssl_conf))
+        include_dir = os.path.join(openssl_root, "include")
+        lib_dir = os.path.join(openssl_root, "lib")
+        opensslv_h = os.path.join(include_dir, "openssl", "opensslv.h")
+        version = parse_openssl_version(opensslv_h)
+        if os.path.exists(include_dir) and os.path.exists(lib_dir) and is_openssl_version_acceptable(version):
+            return include_dir, lib_dir, os.environ.get('OPENSSL_LIBNAME') or 'libcrypto.lib'
+
+    # 2. Search common locations
+    potential_locations = [
+        os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'OpenSSL'),
+        os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'), 'OpenSSL'),
+        os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'OpenSSL-Win64'),  # important!
+        os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'), 'OpenSSL-Win32'),
+        os.path.join(os.environ.get('VCPKG_ROOT', ''), 'installed', 'x64-windows'),
+        os.path.join(os.environ.get('VCPKG_ROOT', ''), 'installed', 'x86-windows'),
+        os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Strawberry', 'c', 'openssl'),
+        os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Git', 'mingw64', 'openssl'),
+        os.path.expanduser(r'~\scoop\apps\openssl'),
+    ]
+
+    version_subdirs = ["", "openssl", "openssl-3", "openssl-1.1"]
+
+    for base_location in potential_locations:
+        if not os.path.exists(base_location):
+            continue
+        for subdir in version_subdirs:
+            openssl_root = os.path.join(base_location, subdir) if subdir else base_location
+            include_dir = os.path.join(openssl_root, "include")
+            lib_dir = os.path.join(openssl_root, "lib")
+            opensslv_h = os.path.join(include_dir, "openssl", "opensslv.h")
+            if os.path.exists(opensslv_h) and os.path.exists(lib_dir):
+                version = parse_openssl_version(opensslv_h)
+                if is_openssl_version_acceptable(version):
+                    for lib_name in ['libcrypto.lib', 'libeay32.lib', 'crypto.lib']:
+                        if os.path.exists(os.path.join(lib_dir, lib_name)):
+                            return include_dir, lib_dir, lib_name
+
+    # 3. Try from PATH
+    try:
+        which_openssl = subprocess.check_output(["where", "openssl.exe"],
+                                               stderr=subprocess.DEVNULL,
+                                               universal_newlines=True).strip().split('\n')[0]
+        if which_openssl:
+            openssl_bin_dir = os.path.dirname(which_openssl)
+            openssl_root = os.path.dirname(openssl_bin_dir)
+            include_dir = os.path.join(openssl_root, "include")
+            lib_dir = os.path.join(openssl_root, "lib")
+            opensslv_h = os.path.join(include_dir, "openssl", "opensslv.h")
+            if os.path.exists(opensslv_h):
+                version = parse_openssl_version(opensslv_h)
+                if is_openssl_version_acceptable(version):
+                    for lib_name in ['libcrypto.lib', 'libeay32.lib', 'crypto.lib']:
+                        if os.path.exists(os.path.join(lib_dir, lib_name)):
+                            return include_dir, lib_dir, lib_name
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "OpenSSL 3.x not found. Please install OpenSSL 3.x and set correct path or set OPENSSL_CONF."
+    )
+
+# Find OpenSSL prefix on non-Windows platforms
 def find_openssl_prefix() -> str:
     """
     Tries to detect OpenSSL installation path (Linux, macOS Homebrew, or system default).
@@ -131,10 +235,10 @@ class AmalgationLibSqliteBuilder(build_ext):
                             'following files are present in the sqlcipher3 '
                             'folder: sqlite3.h, sqlite3.c')
 
-    def build_sqlcipher_amalgamation(self):
+    def build_sqlcipher_amalgamation(self, force_rebuild=True):
         """Build SQLCipher amalgamation from the git submodule."""
         log.info("Building SQLCipher amalgamation from submodule")
-        
+    
         if not os.path.exists(self.sqlcipher_submodule_path):
             log.error(f"SQLCipher submodule not found at {self.sqlcipher_submodule_path}")
             raise RuntimeError("SQLCipher submodule not found. Please run 'git submodule update --init'")
@@ -143,6 +247,11 @@ class AmalgationLibSqliteBuilder(build_ext):
         try:
             # Change to the sqlcipher submodule directory
             os.chdir(self.sqlcipher_submodule_path)
+            
+            # Clean existing build if forcing rebuild
+            if force_rebuild:
+                log.info("Cleaning existing SQLCipher build")
+                subprocess.run(["make", "clean"], check=False)
             
             # Run configure
             log.info("Running ./configure in SQLCipher submodule")
@@ -176,7 +285,10 @@ class AmalgationLibSqliteBuilder(build_ext):
             os.chdir(current_dir)
 
     def check_amalgamation(self):
-        if not self.build_sqlcipher_amalgamation():
+        # Check if we should force rebuild based on environment variable
+        force_rebuild = os.environ.get('SQLCIPHER_FORCE_REBUILD', '').lower() in ('1', 'true', 'yes')
+        
+        if not self.build_sqlcipher_amalgamation(force_rebuild=force_rebuild):
             raise RuntimeError(self.amalgamation_message)
 
         if not os.path.exists(self.header_dir):
@@ -235,23 +347,17 @@ class AmalgationLibSqliteBuilder(build_ext):
                 "-lm"
             ])
         else:
-            # Try to locate openssl.
-            openssl_conf = os.environ.get('OPENSSL_CONF')
-            if not openssl_conf:
-                error_message = 'Fatal error: OpenSSL could not be detected!'
-                raise RuntimeError(error_message)
-
-            openssl = os.path.dirname(os.path.dirname(openssl_conf))
-            openssl_lib_path = os.path.join(openssl, "lib")
-
-            # Configure the compiler
-            ext.include_dirs.append(os.path.join(openssl, "include"))
-            ext.define_macros.append(("inline", "__inline"))
-
-            # Configure the linker
-            openssl_libname = os.environ.get('OPENSSL_LIBNAME') or 'libeay32.lib'
-            ext.extra_link_args.append(openssl_libname)
-            ext.extra_link_args.append('/LIBPATH:' + openssl_lib_path)
+            # Use improved OpenSSL detection for Windows
+            try:
+                include_dir, lib_dir, lib_name = find_openssl_on_windows()
+                ext.include_dirs.append(include_dir)
+                ext.define_macros.append(("inline", "__inline"))
+                ext.libraries.extend(['libcrypto', 'libssl'])
+                ext.library_dirs.append(lib_dir)
+                log.info(f"Found OpenSSL on Windows: include={include_dir}, lib={lib_dir}, using {lib_name}")
+            except RuntimeError as e:
+                log.error(str(e))
+                raise
 
         build_ext.build_extension(self, ext)
 
