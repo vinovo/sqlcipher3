@@ -4,7 +4,7 @@ sqlcipher3
 
 To install, run 
 ```
-pip install.
+pip install .
 ```
 
 

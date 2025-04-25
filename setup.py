@@ -13,9 +13,13 @@ from setuptools import Extension
 
 # If you need to change anything, it should be enough to change setup.cfg.
 
+# Remove dist directory if it exists
+dist_dir = 'dist'
+if os.path.exists(dist_dir):
+    log.info(f"Removing existing {dist_dir} directory")
+    shutil.rmtree(dist_dir)
 
-PACKAGE_NAME = 'sqlcipher3-nexa'
-VERSION = '0.0.1'
+VERSION = '0.0.4'
 
 # define sqlite sources
 sources = [os.path.join('src', source)
@@ -24,7 +28,6 @@ sources = [os.path.join('src', source)
                           "statement.c", "util.c", "row.c", "blob.c"]]
 
 # define packages
-packages = [PACKAGE_NAME]
 EXTENSION_MODULE_NAME = "._sqlite3"
 
 # Work around clang raising hard error for unused arguments
@@ -65,18 +68,11 @@ def quote_argument(arg):
     q = '\\"' if sys.platform == 'win32' and sys.version_info < (3, 8) else '"'
     return q + arg + q
 
-define_macros = [('MODULE_NAME', quote_argument(PACKAGE_NAME + '.dbapi2'))]
-
-
-class SystemLibSqliteBuilder(build_ext):
-    description = "Builds a C extension linking against libsqlcipher library"
-
-    def build_extension(self, ext):
-        log.info(self.description)
-        ext.libraries.append('sqlcipher')
-        ext.define_macros.append(('SQLITE_HAS_CODEC', '1'))
-        build_ext.build_extension(self, ext)
-
+define_macros = [
+    ('MODULE_NAME', quote_argument("sqlcipher3.dbapi2")),
+    ('HAVE_STDINT_H', '1'),
+    ('HAVE_INTTYPES_H', '1'),
+]
 
 class AmalgationLibSqliteBuilder(build_ext):
     description = "Builds a C extension using a sqlcipher amalgamation"
@@ -87,16 +83,60 @@ class AmalgationLibSqliteBuilder(build_ext):
 
     header_dir = os.path.join(amalgamation_root, 'sqlcipher')
     header_file = os.path.join(header_dir, 'sqlite3.h')
+    
+    sqlcipher_submodule_path = os.path.join("dependencies", "sqlcipher")
 
     amalgamation_message = ('Sqlcipher amalgamation not found. Please download'
                             ' or build the amalgamation and make sure the '
                             'following files are present in the sqlcipher3 '
                             'folder: sqlite3.h, sqlite3.c')
 
+    def build_sqlcipher_amalgamation(self):
+        """Build SQLCipher amalgamation from the git submodule."""
+        log.info("Building SQLCipher amalgamation from submodule")
+        
+        if not os.path.exists(self.sqlcipher_submodule_path):
+            log.error(f"SQLCipher submodule not found at {self.sqlcipher_submodule_path}")
+            raise RuntimeError("SQLCipher submodule not found. Please run 'git submodule update --init'")
+        
+        current_dir = os.getcwd()
+        try:
+            # Change to the sqlcipher submodule directory
+            os.chdir(self.sqlcipher_submodule_path)
+            
+            # Run configure
+            log.info("Running ./configure in SQLCipher submodule")
+            configure_result = subprocess.run(["./configure"], check=True)
+            
+            # Run make sqlite.c
+            log.info("Running make sqlite.c in SQLCipher submodule")
+            make_result = subprocess.run(["make", "sqlite3.c"], check=True)
+            
+            # Return to the original directory
+            os.chdir(current_dir)
+            
+            # Copy the generated files to the root directory
+            log.info("Copying SQLCipher amalgamation files to root directory")
+            submodule_header = os.path.join(self.sqlcipher_submodule_path, "sqlite3.h")
+            submodule_source = os.path.join(self.sqlcipher_submodule_path, "sqlite3.c")
+            
+            shutil.copy(submodule_header, self.amalgamation_header)
+            shutil.copy(submodule_source, self.amalgamation_source)
+            
+            log.info("SQLCipher amalgamation build completed successfully")
+            return True
+        except subprocess.CalledProcessError as e:
+            log.error(f"Error building SQLCipher amalgamation: {str(e)}")
+            raise RuntimeError(f"Failed to build SQLCipher amalgamation: {str(e)}")
+        except Exception as e:
+            log.error(f"Unexpected error building SQLCipher amalgamation: {str(e)}")
+            raise
+        finally:
+            # Ensure we return to the original directory
+            os.chdir(current_dir)
+
     def check_amalgamation(self):
-        header_exists = os.path.exists(self.amalgamation_header)
-        source_exists = os.path.exists(self.amalgamation_source)
-        if not header_exists or not source_exists:
+        if not self.build_sqlcipher_amalgamation():
             raise RuntimeError(self.amalgamation_message)
 
         if not os.path.exists(self.header_dir):
@@ -185,7 +225,7 @@ class AmalgationLibSqliteBuilder(build_ext):
 
 def get_setup_args():
     return dict(
-        name=PACKAGE_NAME,
+        name="sqlcipher3-nexa",
         version=VERSION,
         description="DB-API 2.0 interface for SQLCipher 3.x",
         long_description='',
@@ -194,13 +234,17 @@ def get_setup_args():
         license="zlib/libpng",
         platforms="ALL",
         url="https://github.com/vinovo/sqlcipher3",
-        package_dir={PACKAGE_NAME: "sqlcipher3"},
-        packages=packages,
+        package_dir={"sqlcipher3": "sqlcipher3"},
+        packages=["sqlcipher3"],
         ext_modules=[Extension(
-            name=PACKAGE_NAME + EXTENSION_MODULE_NAME,
+            name="sqlcipher3._sqlite3",
             sources=sources,
             define_macros=define_macros)
         ],
+        include_package_data=True,
+        package_data={
+            '': ['dependencies/**/*'],
+        },
         classifiers=[
             "Development Status :: 4 - Beta",
             "Intended Audience :: Developers",
@@ -215,7 +259,6 @@ def get_setup_args():
         cmdclass = {
             "build_static": AmalgationLibSqliteBuilder,
             "build_ext": AmalgationLibSqliteBuilder,  # default for pip install / build
-            "build_ext_system": SystemLibSqliteBuilder,  # optional manual command
         }
     )
 

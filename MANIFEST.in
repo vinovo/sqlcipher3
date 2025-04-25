@@ -4,5 +4,9 @@ include LICENSE
 include setup.py
 include src/*.h
 include src/*.c
+include sqlite3.h
+include sqlite3.c
 
 global-exclude *~ *.pyc
+
+recursive-include dependencies *

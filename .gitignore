@@ -2,4 +2,7 @@ sqlcipher/sqlite3.h
 build/*
 dist/*
 sqlcipher3.egg-info/*
+sqlcipher3_nexa.egg-info/*
 _sqlite*.so
+sqlite3.c
+sqlite3.h
