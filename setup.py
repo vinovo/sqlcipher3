@@ -14,8 +14,8 @@ from setuptools import Extension
 # If you need to change anything, it should be enough to change setup.cfg.
 
 
-PACKAGE_NAME = 'sqlcipher3'
-VERSION = '0.5.4'
+PACKAGE_NAME = 'sqlcipher3-nexa'
+VERSION = '0.0.1'
 
 # define sqlite sources
 sources = [os.path.join('src', source)
@@ -189,11 +189,11 @@ def get_setup_args():
         version=VERSION,
         description="DB-API 2.0 interface for SQLCipher 3.x",
         long_description='',
-        author="Charles Leifer",
-        author_email="coleifer@gmail.com",
+        author="NexaAI",
+        author_email="dev@nexa4ai.com",
         license="zlib/libpng",
         platforms="ALL",
-        url="https://github.com/coleifer/sqlcipher3",
+        url="https://github.com/vinovo/sqlcipher3",
         package_dir={PACKAGE_NAME: "sqlcipher3"},
         packages=packages,
         ext_modules=[Extension(
