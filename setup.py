@@ -20,7 +20,7 @@ if os.path.exists(dist_dir):
     log.info(f"Removing existing {dist_dir} directory")
     shutil.rmtree(dist_dir)
 
-VERSION = '0.0.12'
+VERSION = '0.0.14'
 
 # define sqlite sources
 sources = [os.path.join('src', source)
@@ -218,6 +218,74 @@ define_macros = [
     ('HAVE_INTTYPES_H', '1'),
 ]
 
+class SystemLibSqliteBuilder(build_ext):
+    description = "Builds a C extension linking against system SQLCipher/SQLite3 library"
+
+    def find_system_sqlcipher(self):
+        """
+        Find system-installed SQLCipher or SQLite3.
+        Returns (include_dir, library_dir, library_name).
+        """
+        candidates = []
+
+        if sys.platform == "win32":
+            # Check VCPKG (assume vcpkg has SQLCipher installed)
+            vcpkg_root = os.environ.get('VCPKG_ROOT', r'C:\vcpkg')
+            if vcpkg_root and os.path.exists(vcpkg_root):
+                for triplet in ['x64-windows', 'x86-windows']:
+                    prefix = os.path.join(vcpkg_root, 'installed', triplet)
+                    if os.path.exists(os.path.join(prefix, 'include', 'sqlcipher', 'sqlite3.h')):
+                        candidates.append((os.path.join(prefix, 'include'),
+                                           os.path.join(prefix, 'lib'),
+                                           'sqlcipher'))
+        else:
+            # macOS (Homebrew/MacPorts) or Linux
+            brew_prefixes = [
+                "/usr/local/opt/sqlcipher",
+                "/usr/local/opt/sqlite",
+                "/opt/homebrew/opt/sqlcipher",
+                "/opt/homebrew/opt/sqlite",
+            ]
+            linux_prefixes = [
+                "/usr",
+                "/usr/local",
+                "/opt/sqlcipher",
+                "/opt/sqlite",
+            ]
+            paths = brew_prefixes if sys.platform == "darwin" else linux_prefixes
+            for prefix in paths:
+                if os.path.exists(os.path.join(prefix, 'include', 'sqlcipher', 'sqlite3.h')):
+                    candidates.append((os.path.join(prefix, 'include'),
+                                       os.path.join(prefix, 'lib'),
+                                       'sqlcipher'))
+
+        if not candidates:
+            raise RuntimeError("Could not find a system SQLCipher/SQLite3 installation.")
+
+        # Pick the first candidate
+        return candidates[0]
+
+    def build_extension(self, ext):
+        log.info(self.description)
+
+        try:
+            include_dir, lib_dir, lib_name = self.find_system_sqlcipher()
+
+            ext.include_dirs.append(include_dir)
+            ext.library_dirs.append(lib_dir)
+            ext.libraries.append(lib_name)
+            log.info(f"Found SQLCipher/SQLite3: include={include_dir}, lib={lib_dir}, library={lib_name}")
+
+            # Add macros
+            ext.define_macros.append(('SQLITE_HAS_CODEC', '1'))
+            ext.define_macros.append(('HAVE_STDINT_H', '1'))
+            ext.define_macros.append(('HAVE_INTTYPES_H', '1'))
+        except RuntimeError as e:
+            log.error(str(e))
+            raise
+
+        build_ext.build_extension(self, ext)
+
 class AmalgationLibSqliteBuilder(build_ext):
     description = "Builds a C extension using a sqlcipher amalgamation"
 
@@ -404,7 +472,7 @@ def get_setup_args():
             "Topic :: Software Development :: Libraries :: Python Modules"],
         cmdclass = {
             "build_static": AmalgationLibSqliteBuilder,
-            "build_ext": AmalgationLibSqliteBuilder,  # default for pip install / build
+            "build_ext": SystemLibSqliteBuilder,  # use dynamic linking by default
         }
     )
 
