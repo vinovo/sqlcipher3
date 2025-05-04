@@ -20,7 +20,7 @@ if os.path.exists(dist_dir):
     log.info(f"Removing existing {dist_dir} directory")
     shutil.rmtree(dist_dir)
 
-VERSION = '0.0.14'
+VERSION = '0.0.16'
 
 # define sqlite sources
 sources = [os.path.join('src', source)
